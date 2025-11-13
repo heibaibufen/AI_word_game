@@ -1,78 +1,129 @@
-from game.base import TextObject
+from enum import Enum
+from typing import Optional, List
+from pydantic import Field
+from .base import Text_BaseModel
 
 
-class Wall(TextObject):
-    def __init__(self, x, y):
-        super().__init__(name="墙", symbol="墙", x=x, y=y, interactable=False)
-
-class Door(TextObject):
-    def __init__(self, x, y, locked=True):
-        super().__init__(name="门", symbol="门", x=x, y=y, interactable=True)
-        self.locked = locked
-
-    def interact(self, actor):
-        if self.locked:
-            return "门被锁住了。"
-        else:
-            return "你推开了门，通向新的房间。"
-
-class Treasure(TextObject):
-    def __init__(self, x, y, value=100):
-        super().__init__(name="宝箱", symbol="箱", x=x, y=y, interactable=True)
-        self.value = value
-        self.taken = False
-
-    def interact(self, actor):
-        if self.taken:
-            return "宝箱已经是空的。"
-        self.taken = True
-        return f"你打开了宝箱，获得了 {self.value} 金币！"
+class GameObjectType(str, Enum):
+    """游戏对象类型枚举"""
+    EMPTY = "empty"
+    WALL = "wall"
+    PLAYER = "player"
+    DOOR = "door"
+    KEY = "key"
+    MONSTER = "monster"
+    TREASURE = "treasure"
+    NPC = "npc"
+    ITEM = "item"
 
 
-class KeyItem(TextObject):
-    def __init__(self, x, y):
-        super().__init__(name="钥匙", symbol="钥", x=x, y=y, interactable=True)
-        self.taken = False
-
-    def interact(self, actor):
-        if self.taken:
-            return "这里已经什么都没有了。"
-        self.taken = True
-        actor.has_key = True
-        return "你捡起了一把闪亮的钥匙。"
+class Direction(str, Enum):
+    """方向枚举"""
+    UP = "up"
+    DOWN = "down"
+    LEFT = "left"
+    RIGHT = "right"
 
 
-class Monster(TextObject):
-    def __init__(self, x, y, hp=30):
-        super().__init__(name="怪物", symbol="怪", x=x, y=y, interactable=True)
-        self.hp = hp
+class Position(Text_BaseModel):
+    """位置坐标"""
+    x: int = Field(description="X坐标")
+    y: int = Field(description="Y坐标")
 
-    def interact(self, actor):
-        if self.hp <= 0:
-            return "怪物已经被打败。"
-        self.hp -= 10
-        if self.hp > 0:
-            return f"你攻击了怪物！它还剩 {self.hp} 生命。"
-        else:
-            return "你打败了怪物！"
+    def __add__(self, other: 'Position') -> 'Position':
+        """位置相加"""
+        return Position(x=self.x + other.x, y=self.y + other.y)
+
+    def __eq__(self, other: object) -> bool:
+        """位置相等比较"""
+        if not isinstance(other, Position):
+            return False
+        return self.x == other.x and self.y == other.y
+
+    def __hash__(self) -> int:
+        """使位置可哈希，用作字典键"""
+        return hash((self.x, self.y))
 
 
-class Npc(TextObject):
-    def __init__(self, x, y, dialog="你好，旅行者。"):
-        super().__init__(name="NPC", symbol="人", x=x, y=y, interactable=True)
-        self.dialog = dialog
+class GameObject(Text_BaseModel):
+    """基础游戏对象类"""
+    type: GameObjectType = Field(description="对象类型")
+    name: str = Field(description="对象名称")
+    symbol: str = Field(description="显示符号")
+    position: Position = Field(description="位置")
+    interactive: bool = Field(default=False, description="是否可交互")
+    passable: bool = Field(default=False, description="是否可通过")
 
-    def interact(self, actor):
-        return self.dialog
+    @classmethod
+    def get_example_instance(cls) -> 'GameObject':
+        """创建示例实例"""
+        return GameObject(
+            type=GameObjectType.WALL,
+            name="Wall",
+            symbol="wall",
+            position=Position(x=0, y=0),
+            interactive=False,
+            passable=False
+        )
 
-class Player(TextObject):
-    def __init__(self, x, y):
-        super().__init__(name="我", symbol="我", x=x, y=y, interactable=True)
-        self.has_key = False
 
-    def move(self, dx, dy, world):
-        new_x, new_y = self.x + dx, self.y + dy
-        if world.is_blocked(new_x, new_y):
-            return "那里被挡住了。"
-        world.move_object(self, new_x, new_y)
-        return "你移动了一步。"
+class Player(Text_BaseModel):
+    """玩家角色类"""
+    position: Position = Field(description="当前位置")
+    gold: int = Field(default=0, description="金币数量")
+    has_key: bool = Field(default=False, description="拥有钥匙")
+    health: int = Field(default=100, description="生命值")
+    max_health: int = Field(default=100, description="最大生命值")
+    inventory: List[str] = Field(default_factory=list, description="背包物品")
+
+    def move(self, dx: int, dy: int, world) -> str:
+        """按方向移动玩家"""
+        new_pos = Position(x=self.position.x + dx, y=self.position.y + dy)
+        return world.move_player_to(new_pos)
+
+    @classmethod
+    def get_example_instance(cls) -> 'Player':
+        """创建示例实例"""
+        return Player(
+            position=Position(x=1, y=1),
+            gold=0,
+            has_key=False,
+            health=100,
+            max_health=100,
+            inventory=[]
+        )
+
+
+class GameCell(Text_BaseModel):
+    """游戏格子"""
+    position: Position = Field(description="位置")
+    game_object: Optional[GameObject] = Field(default=None, description="格子中的游戏对象")
+
+    @classmethod
+    def get_example_instance(cls) -> 'GameCell':
+        """创建示例实例"""
+        return GameCell(
+            position=Position(x=0, y=0),
+            game_object=GameObject(
+                type=GameObjectType.WALL,
+                name="Wall",
+                symbol="wall",
+                position=Position(x=0, y=0)
+            )
+        )
+
+
+class InteractionResult(Text_BaseModel):
+    """交互结果"""
+    success: bool = Field(description="交互是否成功")
+    message: str = Field(description="结果消息")
+    game_state_changed: bool = Field(default=False, description="游戏状态是否改变")
+
+    @classmethod
+    def get_example_instance(cls) -> 'InteractionResult':
+        """创建示例实例"""
+        return InteractionResult(
+            success=True,
+            message="交互成功",
+            game_state_changed=True
+        )
